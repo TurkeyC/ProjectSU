@@ -12,7 +12,7 @@ def resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath("MyBuild")
+        base_path = os.path.abspath("../MyBuild")
 
     return os.path.join(base_path, relative_path)
 
@@ -24,30 +24,92 @@ def search_excel_files(file_paths, search_term, case_sensitive=False):
             try:
                 # 获取文件名(不带路径)
                 file_name = Path(file_path).name
-
-                # 读取 Excel 文件
-                xls = pd.ExcelFile(file_path)
                 file_results = {}
+                success = False
 
-                # 遍历所有 sheet
-                for sheet_name in xls.sheet_names:
-                    df = pd.read_excel(xls, sheet_name=sheet_name, keep_default_na=False,
-                                      na_values=[], header=None)
+                # 定义要尝试的引擎和选项组合
+                engines_and_options = [
+                    # 首先尝试 openpyxl 标准模式
+                    {'engine': 'openpyxl', 'options': {}},
+                    # 然后尝试 openpyxl 的只读模式，忽略样式
+                    {'engine': 'openpyxl', 'options': {'read_only': True}},
+                    # 尝试 xlrd 引擎
+                    {'engine': 'xlrd', 'options': {}},
+                    # 尝试 pyxlsb 引擎 (适用于 .xlsb 文件)
+                    {'engine': 'pyxlsb', 'options': {}},
+                    # 最后尝试多种 'odf' 引擎（适用于 OpenOffice 文件）
+                    {'engine': 'odf', 'options': {}}
+                ]
 
-                    # 根据大小写敏感设置进行搜索
-                    if case_sensitive:
-                        result = df[df.apply(lambda row: row.astype(str).str.contains(search_term, regex=False).any(), axis=1)]
-                    else:
-                        result = df[df.apply(lambda row: row.astype(str).str.contains(search_term, case=False, regex=False).any(), axis=1)]
+                for engine_config in engines_and_options:
+                    if success:
+                        break
 
-                    if not result.empty:
-                        file_results[sheet_name] = result
+                    engine = engine_config['engine']
+                    options = engine_config['options']
 
-                if file_results:  # 只有当文件中有结果时才添加
+                    try:
+                        # 尝试使用当前引擎获取所有表格名
+                        if engine == 'openpyxl' and options.get('read_only', False):
+                            # 对于只读模式特别处理
+                            from openpyxl import load_workbook
+                            wb = load_workbook(file_path, read_only=True, data_only=True, keep_links=False)
+                            sheet_names = wb.sheetnames
+                        else:
+                            # 尝试直接使用 pandas 获取表格名
+                            try:
+                                xl = pd.ExcelFile(file_path, engine=engine, **options)
+                                sheet_names = xl.sheet_names
+                            except:
+                                # 跳过这个引擎组合
+                                continue
+
+                        for sheet_name in sheet_names:
+                            try:
+                                # 读取表格内容
+                                read_options = {
+                                    'io': file_path,
+                                    'sheet_name': sheet_name,
+                                    'engine': engine,
+                                    'keep_default_na': False,
+                                    'na_values': [],
+                                    'header': None
+                                }
+                                # 合并额外选项
+                                read_options.update(options)
+
+                                # 尝试读取并处理异常
+                                df = pd.read_excel(**read_options)
+
+                                # 根据大小写敏感设置进行搜索
+                                if case_sensitive:
+                                    result = df[df.apply(lambda row: row.astype(str).str.contains(search_term, regex=False).any(), axis=1)]
+                                else:
+                                    result = df[df.apply(lambda row: row.astype(str).str.contains(search_term, case=False, regex=False).any(), axis=1)]
+
+                                if not result.empty:
+                                    file_results[sheet_name] = result
+                                    success = True
+                            except Exception as sheet_error:
+                                # 继续尝试其他表格
+                                continue
+
+                        # 如果成功读取了所有表格，跳出引擎尝试循环
+                        if success:
+                            break
+
+                    except Exception:
+                        # 尝试下一个引擎组合
+                        continue
+
+                # 处理结果
+                if file_results:
                     all_results[file_name] = file_results
+                else:
+                    all_results[file_name] = {"error": "无法读取文件内容或未找到匹配结果"}
 
             except Exception as e:
-                all_results[f"错误:{file_name}"] = {"error": str(e)}
+                all_results[file_name] = {"error": f"处理文件出错: {str(e)}"}
 
         return all_results
     except Exception as e:

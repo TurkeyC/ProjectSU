@@ -8,69 +8,6 @@ from pathlib import Path
 import importlib.util
 import tempfile
 import shutil
-import time
-
-def repair_excel_with_com(file_path):
-    """
-    Repair Excel file using Excel's COM interface.
-    This simulates opening the file in Excel and saving it as a new file.
-    """
-    try:
-        import win32com.client
-    except ImportError:
-        raise ImportError("需要安装pywin32库才能进行Excel修复。请运行: pip install pywin32")
-
-    tmp_path = None
-    excel_app = None
-
-    try:
-        # Create a temporary file path for the repaired file
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.xlsx')
-        os.close(tmp_fd)
-
-        # Create Excel application
-        excel_app = win32com.client.Dispatch("Excel.Application")
-        excel_app.DisplayAlerts = False  # Don't show alerts
-        excel_app.Visible = False        # Don't show Excel
-
-        # Open the problematic file
-        workbook = excel_app.Workbooks.Open(os.path.abspath(file_path))
-
-        # Save as new file (this is the repair step)
-        workbook.SaveAs(os.path.abspath(tmp_path))
-        workbook.Close()
-
-        # Read the repaired file with pandas
-        xl = pd.ExcelFile(tmp_path)
-        sheet_names = xl.sheet_names
-
-        results = {}
-        for sheet_name in sheet_names:
-            df = pd.read_excel(
-                tmp_path,
-                sheet_name=sheet_name,
-                header=None,
-                dtype=str,
-                na_filter=False
-            )
-            results[sheet_name] = df
-
-        return results
-
-    except Exception as e:
-        raise Exception(f"Excel COM修复失败: {str(e)}")
-
-    finally:
-        # Clean up resources
-        if excel_app:
-            excel_app.Quit()
-
-        # Clean up the temporary file
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
@@ -78,7 +15,7 @@ def resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath("MyBuild")
+        base_path = os.path.abspath("../MyBuild")
 
     return os.path.join(base_path, relative_path)
 
@@ -173,7 +110,7 @@ def search_excel_files(file_paths, search_term, case_sensitive=False):
 
                 for sheet_name in sheet_names:
                     try:
-                        # 使用严格的文本模式读取数据
+                        # 使用严格的文本模式读取数据，避免类型转换问题
                         df = pd.read_excel(
                             file_path,
                             sheet_name=sheet_name,
@@ -212,7 +149,7 @@ def search_excel_files(file_paths, search_term, case_sensitive=False):
                 last_error = str(e)
                 continue
 
-        # Step 2: If all standard approaches failed, try the temp file approach
+        # Step 2: If all standard approaches failed, try the "repair" approach
         if not file_results:
             try:
                 # Try the temporary file approach
@@ -238,40 +175,13 @@ def search_excel_files(file_paths, search_term, case_sensitive=False):
                     all_results[file_name] = file_results
 
             except Exception as e:
-                last_error = f"{last_error}; 常规修复尝试失败: {str(e)}"
-
-        # Step 3: If all previous approaches failed, try using Excel COM automation
-        if not file_results:
-            try:
-                # Try Excel COM automation repair
-                excel_repaired_sheets = repair_excel_with_com(file_path)
-
-                # Search in the Excel-repaired data
-                for sheet_name, df in excel_repaired_sheets.items():
-                    mask = df.apply(
-                        lambda row: row.astype(str).str.contains(
-                            search_term,
-                            case=case_sensitive,
-                            regex=False,
-                            na=False
-                        ).any(),
-                        axis=1
-                    )
-                    result = df[mask]
-
-                    if not result.empty:
-                        file_results[sheet_name] = result
-
-                if file_results:
-                    all_results[file_name] = file_results
-
-            except Exception as e:
-                last_error = f"{last_error}; Excel COM修复尝试失败: {str(e)}"
+                # If even the repair approach fails, record the error
+                last_error = f"{last_error}; 修复尝试失败: {str(e)}"
 
         # Record errors if all attempts failed
         if not file_results:
             error_msg = last_error if last_error else "；".join(sheet_errors) if sheet_errors else "未知错误"
-            all_results[file_name] = {"error": f"所有解析方式失败: {error_msg}"}
+            all_results[file_name] = {"error": f"所有引擎解析失败: {error_msg}"}
 
     return all_results
 
