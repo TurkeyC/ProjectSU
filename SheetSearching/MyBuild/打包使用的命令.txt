@@ -1,0 +1,1 @@
+pyinstaller --onefile --name "Excel多表搜索工具" --windowed --icon="E:\User_Stuff\Documents\Code_Typing\Python_3.12_Code_Workspace\ProjectSU\app_icon.ico" "E:\User_Stuff\Documents\Code_Typing\Python_3.12_Code_Workspace\ProjectSU\SheetSearching\SSSUv0.6b.py"
